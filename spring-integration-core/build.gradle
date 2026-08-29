@@ -47,6 +47,7 @@
         optionalApi 'org.jetbrains.kotlinx:kotlinx-coroutines-reactor'
 
         testImplementation 'com.google.protobuf:protobuf-java-util'
+        testImplementation 'io.grpc:grpc-netty-shaded'
         testImplementation libs.org.aspectj.aspectjweaver
         testImplementation 'io.micrometer:micrometer-observation-test'
         testImplementation('io.micrometer:micrometer-tracing-integration-test') {
@@ -86,3 +87,10 @@
 		}
 	}
 
+	tasks.register('correlatingAgentDemo', JavaExec) {
+		dependsOn testClasses
+		group = 'verification'
+		description = 'Runs the correlating agent test applet'
+		classpath = sourceSets.test.runtimeClasspath
+		mainClass = 'org.springframework.integration.aggregator.agent.CorrelatingAgentDemo'
+	}

@@ -24,6 +24,7 @@ import org.jspecify.annotations.Nullable;
  * A metrics facade that delegates to a concrete implementation.
  *
  * @author Gary Russell
+ * @author Mohamed Zayton
  * @since 5.0.4
  *
  */

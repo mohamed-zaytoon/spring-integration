@@ -1,0 +1,47 @@
+plugins {
+	id 'java'
+	id 'checkstyle'
+	id 'org.springframework.boot' version '4.1.1'
+}
+
+group = 'org.springframework.integration.samples'
+version = '1.0.0-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.release = 17
+	options.encoding = 'UTF-8'
+}
+
+dependencies {
+	implementation platform('org.springframework.boot:spring-boot-dependencies:4.1.1')
+	implementation enforcedPlatform(repoLibs.spring.framework.bom)
+	implementation enforcedPlatform(repoLibs.io.grpc.bom)
+	implementation enforcedPlatform(repoLibs.com.google.protobuf.bom)
+	implementation enforcedPlatform(repoLibs.io.micrometer.bom)
+	implementation enforcedPlatform(repoLibs.io.projectreactor.bom)
+
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.integration:spring-integration-core:7.2.0-SNAPSHOT'
+	implementation 'io.grpc:grpc-netty-shaded'
+
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+tasks.named('bootJar') {
+	archiveFileName = 'correlating-agent-demo.jar'
+}
+
+checkstyle {
+	configDirectory = file('../../src/checkstyle')
+	toolVersion = '13.8.0'
+}
