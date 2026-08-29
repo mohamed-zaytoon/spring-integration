@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="description" content="Local dashboard for exercising the Spring Integration correlating agent.">
+	<title>Correlating Agent Lab</title>
+	<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+	<a class="skip-link" href="#main">Skip to dashboard</a>
+	<header class="masthead">
+		<div>
+			<p class="eyebrow">Spring Integration · local test bench</p>
+			<h1>Correlating Agent <span>Lab</span></h1>
+			<p class="lede">Watch an agent decide when an aggregator should wait, release, discard, or expire a message group.</p>
+		</div>
+		<div class="runtime-card">
+			<span class="pulse" aria-hidden="true"></span>
+			<div><small>Runtime</small><strong id="runtime-mode">Connecting…</strong></div>
+		</div>
+	</header>
+
+	<main id="main">
+		<section class="topology" aria-labelledby="topology-title">
+			<div class="section-heading">
+				<div><p class="eyebrow">Live topology</p><h2 id="topology-title">Two ways through the same contract</h2></div>
+				<p id="connection-status" class="quiet" role="status" aria-live="polite">Loading application state…</p>
+			</div>
+
+			<div class="topology-grid">
+				<article class="service-card" id="in-process-card">
+					<div class="card-heading"><span class="number">01</span><div><h3>In process</h3><p>Direct port wiring · no TCP</p></div><span class="status-pill" id="in-process-status">Unknown</span></div>
+					<div class="flow" aria-label="Message handler connects directly to deterministic agent">
+						<span>Handler</span><i></i><span>Agent</span><i></i><span>Store</span>
+					</div>
+					<p class="detail" id="in-process-detail">Waiting for status.</p>
+					<div class="button-row environment-controls">
+						<button type="button" data-topology="IN_PROCESS" data-action="start">Start</button>
+						<button type="button" data-topology="IN_PROCESS" data-action="stop" class="secondary">Stop</button>
+						<button type="button" data-topology="IN_PROCESS" data-action="reset" class="ghost">Reset</button>
+					</div>
+				</article>
+
+				<article class="service-card" id="external-card">
+					<div class="card-heading"><span class="number">02</span><div><h3>External</h3><p>Two JVMs · loopback gRPC</p></div><span class="status-pill" id="external-status">Offline</span></div>
+					<div class="flow" aria-label="Handler JVM and agent JVM communicate over gRPC">
+						<span>Handler JVM</span><i></i><span>gRPC</span><i></i><span>Agent JVM</span>
+					</div>
+					<p class="detail" id="external-detail">Start an interactive environment when you want to send messages.</p>
+					<div class="button-row environment-controls">
+						<button type="button" data-topology="EXTERNAL" data-action="start">Start JVMs</button>
+						<button type="button" data-topology="EXTERNAL" data-action="stop" class="secondary">Stop</button>
+						<button type="button" data-topology="EXTERNAL" data-action="reset" class="ghost">Reset</button>
+						<button type="button" data-topology="EXTERNAL" data-action="agent-start" class="ghost agent-lifecycle">Start agent</button>
+						<button type="button" data-topology="EXTERNAL" data-action="agent-stop" class="ghost agent-lifecycle">Stop agent</button>
+					</div>
+				</article>
+			</div>
+		</section>
+
+		<section class="workbench" aria-labelledby="workbench-title">
+			<div class="section-heading">
+				<div><p class="eyebrow">Scenario runner</p><h2 id="workbench-title">Exercise the decision boundary</h2></div>
+			</div>
+			<div class="workbench-grid">
+				<article class="panel suite-panel">
+					<div class="panel-title"><h3>Automated suites</h3><span id="active-run-badge" class="status-pill">Idle</span></div>
+					<p>Run wait/release/discard, forced expiry, health, and stop/start checks. External suites create and clean up fresh JVMs.</p>
+					<div class="suite-buttons">
+						<button type="button" class="primary large run-suite" data-suite="ALL">Run all checks</button>
+						<button type="button" class="secondary run-suite" data-suite="IN_PROCESS">In-process only</button>
+						<button type="button" class="secondary run-suite" data-suite="EXTERNAL">External only</button>
+					</div>
+					<div class="progress-track" aria-hidden="true"><span id="run-progress"></span></div>
+					<p class="quiet" id="run-summary">No suite has run in this session.</p>
+				</article>
+
+				<article class="panel message-panel">
+					<div class="panel-title"><h3>Send a message</h3><span class="tag">Serialized per environment</span></div>
+					<form id="message-form">
+						<label>Topology<select id="message-topology" name="topology"><option value="IN_PROCESS">In process</option><option value="EXTERNAL">External</option></select></label>
+						<label class="wide">Payload<input id="payload" name="payload" value="one" maxlength="200" required></label>
+						<label class="wide">Correlation ID<input id="correlation-id" name="correlationId" value="demo-group" maxlength="100" required></label>
+						<label>Sequence number<input id="sequence-number" name="sequenceNumber" type="number" value="1" min="1" required></label>
+						<label>Sequence size<input id="sequence-size" name="sequenceSize" type="number" value="2" min="1" required></label>
+						<button type="submit" class="primary wide">Send to handler</button>
+					</form>
+					<div id="message-result" class="message-result" aria-live="polite">The first message in a two-part group should wait.</div>
+				</article>
+			</div>
+		</section>
+
+		<section class="results" aria-labelledby="results-title">
+			<div class="section-heading">
+				<div><p class="eyebrow">Evidence</p><h2 id="results-title">Latest checks</h2></div>
+				<button id="refresh" type="button" class="ghost">Refresh</button>
+			</div>
+			<div id="check-list" class="check-list"><p class="empty">Completed check results will appear here.</p></div>
+			<details id="logs-panel"><summary>Child-process diagnostics</summary><pre id="child-logs">No child logs captured.</pre></details>
+		</section>
+
+		<section class="history" id="history-section" aria-labelledby="history-title">
+			<div class="section-heading"><div><p class="eyebrow">Persistent JSON history</p><h2 id="history-title">Recent runs</h2></div><span class="quiet">Newest first</span></div>
+			<div class="table-wrap">
+				<table><thead><tr><th>Run</th><th>Topology</th><th>State</th><th>Started</th><th>Duration</th></tr></thead><tbody id="history-body"><tr><td colspan="5">No persisted runs yet.</td></tr></tbody></table>
+			</div>
+		</section>
+	</main>
+
+	<footer><span>Loopback only · plaintext local transport</span><span>Spring Integration 7.2 snapshot</span></footer>
+	<script src="/app.js" defer></script>
+</body>
+</html>
