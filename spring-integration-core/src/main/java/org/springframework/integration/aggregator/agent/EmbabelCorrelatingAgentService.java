@@ -75,13 +75,11 @@ public final class EmbabelCorrelatingAgentService extends CorrelatingAgentPortGr
 			for (int attempt = 1; attempt <= MAX_STALE_RETRIES; attempt++) {
 				MessageAssessment assessment = this.dependencies.evaluateMessage(EvaluateMessageRequest.newBuilder()
 						.setInvocationId(request.getInvocationId())
-						.setMessage(request.getMessage())
 						.build());
 				MessageDecision decision = this.agent.decide(assessment);
 				ApplyDecisionResponse applied = this.dependencies.applyMessageDecision(
 						ApplyMessageDecisionRequest.newBuilder()
 								.setInvocationId(request.getInvocationId())
-								.setMessage(request.getMessage())
 								.setExpectedVersion(assessment.getVersion())
 								.setDecision(decision)
 								.setConditionEvaluated(assessment.getConditionEvaluated())
@@ -118,15 +116,11 @@ public final class EmbabelCorrelatingAgentService extends CorrelatingAgentPortGr
 				ForceCompleteAssessment assessment = this.dependencies.evaluateForceComplete(
 						EvaluateForceCompleteRequest.newBuilder()
 								.setInvocationId(request.getInvocationId())
-								.setGroupId(request.getGroupId())
-								.setCandidateTimestamp(request.getCandidateTimestamp())
-								.setCandidateLastModified(request.getCandidateLastModified())
 								.build());
 				ForceCompleteDecision decision = this.agent.decideForceComplete(assessment);
 				ApplyDecisionResponse applied = this.dependencies.applyForceCompleteDecision(
 						ApplyForceCompleteDecisionRequest.newBuilder()
 								.setInvocationId(request.getInvocationId())
-								.setGroupId(request.getGroupId())
 								.setExpectedVersion(assessment.getVersion())
 								.setDecision(decision)
 								.build());

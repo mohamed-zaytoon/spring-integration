@@ -21,45 +21,16 @@ service CorrelatingDependencyPort {
   rpc ApplyForceCompleteDecision(ApplyForceCompleteDecisionRequest) returns (ApplyDecisionResponse);
 }
 
-message SerializedObject {
-  bytes data = 1;
-  string class_name = 2;
-  uint32 format_version = 3;
-  string content_type = 4;
-  bool null_value = 5;
-}
-
-message HeaderList {
-  repeated HeaderValue values = 1;
-}
-
-message HeaderMap {
-  map<string, HeaderValue> values = 1;
-}
-
-message HeaderValue {
-  string java_type = 1;
-  oneof value {
-    string string_value = 2;
-    int32 int_value = 3;
-    int64 long_value = 4;
-    bool boolean_value = 5;
-    double double_value = 6;
-    bytes bytes_value = 7;
-    string uuid_value = 8;
-    HeaderList list_value = 9;
-    HeaderMap map_value = 10;
-  }
-}
-
-message MessageEnvelope {
-  SerializedObject payload = 1;
-  map<string, HeaderValue> headers = 2;
+message AgentMessageProjection {
+  string type = 1;
+  string content_type = 2;
+  uint32 schema_version = 3;
+  bytes data = 4;
 }
 
 message HandleMessageRequest {
   string invocation_id = 1;
-  MessageEnvelope message = 2;
+  AgentMessageProjection projection = 2;
 }
 
 enum MessageDecision {
@@ -90,7 +61,6 @@ enum DecisionOutcome {
 
 message EvaluateMessageRequest {
   string invocation_id = 1;
-  MessageEnvelope message = 2;
 }
 
 message MessageAssessment {
@@ -107,12 +77,11 @@ message MessageAssessment {
 
 message ApplyMessageDecisionRequest {
   string invocation_id = 1;
-  MessageEnvelope message = 2;
-  int64 expected_version = 3;
-  MessageDecision decision = 4;
-  bool condition_evaluated = 5;
-  bool condition_present = 6;
-  string condition = 7;
+  int64 expected_version = 2;
+  MessageDecision decision = 3;
+  bool condition_evaluated = 4;
+  bool condition_present = 5;
+  string condition = 6;
 }
 
 message ApplyDecisionResponse {
@@ -128,16 +97,10 @@ message HandleMessageResponse {
 
 message ForceCompleteRequest {
   string invocation_id = 1;
-  SerializedObject group_id = 2;
-  int64 candidate_timestamp = 3;
-  int64 candidate_last_modified = 4;
 }
 
 message EvaluateForceCompleteRequest {
   string invocation_id = 1;
-  SerializedObject group_id = 2;
-  int64 candidate_timestamp = 3;
-  int64 candidate_last_modified = 4;
 }
 
 message ForceCompleteAssessment {
@@ -150,9 +113,8 @@ message ForceCompleteAssessment {
 
 message ApplyForceCompleteDecisionRequest {
   string invocation_id = 1;
-  SerializedObject group_id = 2;
-  int64 expected_version = 3;
-  ForceCompleteDecision decision = 4;
+  int64 expected_version = 2;
+  ForceCompleteDecision decision = 3;
 }
 
 message ForceCompleteResponse {

@@ -16,35 +16,29 @@
 
 package org.springframework.integration.aggregator.agent;
 
-import java.io.ObjectInputFilter;
-
 import org.jspecify.annotations.Nullable;
 
-import org.springframework.integration.aggregator.agent.grpc.SerializedObject;
+import org.springframework.integration.aggregator.agent.grpc.AgentMessageProjection;
+import org.springframework.messaging.Message;
 
 /**
- * Strategy for encoding message payloads transferred through the correlating agent port.
+ * Strategy for creating an optional, application-defined message projection for a
+ * correlating agent. A projection is informational only; the handler always applies the
+ * agent decision to the original locally retained message.
  *
- * @author OpenAI
+ * @author Mohamed Zayton
  *
  * @since 7.2
  */
-public interface CorrelatingPayloadCodec {
+@FunctionalInterface
+public interface CorrelatingAgentProjectionAdapter {
 
 	/**
-	 * Encode a payload for transport.
-	 * @param payload the payload, or {@code null}
-	 * @return the transport value
-	 */
-	SerializedObject encode(@Nullable Object payload);
-
-	/**
-	 * Decode a transported payload.
-	 * @param payload the transport value
-	 * @param filter the mandatory deserialization filter
-	 * @return the decoded payload, or {@code null}
+	 * Create a projection for the supplied message.
+	 * @param message the original message
+	 * @return the projection, or {@code null} to omit it
 	 */
 	@Nullable
-	Object decode(SerializedObject payload, ObjectInputFilter filter);
+	AgentMessageProjection project(Message<?> message);
 
 }

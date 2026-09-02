@@ -17,7 +17,7 @@
 package org.springframework.integration.aggregator;
 
 import java.io.IOException;
-import java.io.ObjectInputFilter;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -25,7 +25,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -58,10 +57,9 @@ import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
 import org.springframework.integration.IntegrationMessageHeaderAccessor;
 import org.springframework.integration.StaticMessageHeaderAccessor;
-import org.springframework.integration.aggregator.agent.CorrelatingMessageMapper;
-import org.springframework.integration.aggregator.agent.CorrelatingPayloadCodec;
+import org.springframework.integration.aggregator.agent.CorrelatingAgentProjectionAdapter;
 import org.springframework.integration.aggregator.agent.EmbabelCorrelatingAgentService;
-import org.springframework.integration.aggregator.agent.JavaSerializationCorrelatingPayloadCodec;
+import org.springframework.integration.aggregator.agent.grpc.AgentMessageProjection;
 import org.springframework.integration.aggregator.agent.grpc.ApplyDecisionResponse;
 import org.springframework.integration.aggregator.agent.grpc.ApplyForceCompleteDecisionRequest;
 import org.springframework.integration.aggregator.agent.grpc.ApplyMessageDecisionRequest;
@@ -79,7 +77,6 @@ import org.springframework.integration.aggregator.agent.grpc.HandleMessageRespon
 import org.springframework.integration.aggregator.agent.grpc.LifecycleRequest;
 import org.springframework.integration.aggregator.agent.grpc.MessageAssessment;
 import org.springframework.integration.aggregator.agent.grpc.MessageDecision;
-import org.springframework.integration.aggregator.agent.grpc.MessageEnvelope;
 import org.springframework.integration.channel.NullChannel;
 import org.springframework.integration.context.IntegrationContextUtils;
 import org.springframework.integration.expression.ExpressionUtils;
@@ -154,9 +151,10 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 
 	private Duration correlatingAgentDeadline = Duration.ofSeconds(30);
 
-	private CorrelatingPayloadCodec payloadCodec = new JavaSerializationCorrelatingPayloadCodec();
+	private boolean correlatingAgentEnabled;
 
-	private ObjectInputFilter deserializationFilter = JavaSerializationCorrelatingPayloadCodec.defaultFilter();
+	@Nullable
+	private CorrelatingAgentProjectionAdapter correlatingAgentProjectionAdapter;
 
 	@Nullable
 	private Channel correlatingAgentChannel;
@@ -281,6 +279,19 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 		Assert.state(this.correlatingAgent == null, "The correlating agent has already been initialized");
 		Assert.notNull(channel, "'channel' must not be null");
 		this.correlatingAgentChannel = channel;
+		this.correlatingAgentEnabled = true;
+	}
+
+	/**
+	 * Enable or disable correlating-agent processing. It is disabled by default.
+	 * @param correlatingAgentEnabled whether to use the correlating agent
+	 * @since 7.2
+	 */
+	public void setCorrelatingAgentEnabled(boolean correlatingAgentEnabled) {
+		Assert.state(this.correlatingAgent == null, "The correlating agent has already been initialized");
+		Assert.state(correlatingAgentEnabled || this.correlatingAgentChannel == null,
+				"A correlating agent channel requires correlating-agent processing to be enabled");
+		this.correlatingAgentEnabled = correlatingAgentEnabled;
 	}
 
 	/**
@@ -291,6 +302,7 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 	 * @since 7.2
 	 */
 	public BindableService getCorrelatingDependencyPort() {
+		Assert.state(this.correlatingAgentEnabled, "Correlating-agent processing is not enabled");
 		initializeCorrelatingAgent();
 		CorrelatingDependencyGateway dependencyGateway = this.correlatingDependencyGateway;
 		Assert.state(dependencyGateway != null, "The correlating dependency port could not be initialized");
@@ -309,23 +321,13 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 	}
 
 	/**
-	 * Configure the payload codec used at the gRPC boundary.
-	 * @param payloadCodec the payload codec
+	 * Configure an adapter that creates optional, informational projections for the agent.
+	 * @param projectionAdapter the projection adapter
 	 * @since 7.2
 	 */
-	public void setPayloadCodec(CorrelatingPayloadCodec payloadCodec) {
-		Assert.notNull(payloadCodec, "'payloadCodec' must not be null");
-		this.payloadCodec = payloadCodec;
-	}
-
-	/**
-	 * Configure the mandatory filter applied when payloads are deserialized.
-	 * @param deserializationFilter the object input filter
-	 * @since 7.2
-	 */
-	public void setDeserializationFilter(ObjectInputFilter deserializationFilter) {
-		Assert.notNull(deserializationFilter, "'deserializationFilter' must not be null");
-		this.deserializationFilter = deserializationFilter;
+	public void setCorrelatingAgentProjectionAdapter(CorrelatingAgentProjectionAdapter projectionAdapter) {
+		Assert.notNull(projectionAdapter, "'projectionAdapter' must not be null");
+		this.correlatingAgentProjectionAdapter = projectionAdapter;
 	}
 
 	public final void setMessageStore(MessageGroupStore store) {
@@ -566,7 +568,9 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 			this.groupConditionSupplier = groupConditionProvider.getGroupConditionSupplier();
 		}
 
-		initializeCorrelatingAgent();
+		if (this.correlatingAgentEnabled) {
+			initializeCorrelatingAgent();
+		}
 	}
 
 	private synchronized void initializeCorrelatingAgent() {
@@ -698,20 +702,97 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 
 	@Override
 	protected void handleMessageInternal(Message<?> message) {
+		if (!this.correlatingAgentEnabled) {
+			handleMessageNormally(message);
+			return;
+		}
+		handleMessageWithAgent(message);
+	}
+
+	private void handleMessageNormally(Message<?> message) {
+		Object correlationKey = this.correlationStrategy.getCorrelationKey(message);
+		Assert.state(correlationKey != null,
+				"Null correlation not allowed.  Maybe the CorrelationStrategy is failing?");
+
+		this.logger.debug(() -> "Handling message with correlationKey [" + correlationKey + "]: " + message);
+
+		UUID groupIdUuid = groupIdFor(correlationKey);
+		Lock lock = this.lockRegistry.obtain(groupIdUuid.toString());
+
+		boolean noOutput = true;
+		try {
+			lock.lockInterruptibly();
+			try {
+				noOutput = processMessageForGroup(message, correlationKey, groupIdUuid, lock);
+			}
+			finally {
+				if (noOutput || !this.releaseLockBeforeSend) {
+					lock.unlock();
+				}
+			}
+		}
+		catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			throw new MessageHandlingException(message, "Interrupted getting lock in the [" + this + ']', ex);
+		}
+	}
+
+	private boolean processMessageForGroup(Message<?> message, Object correlationKey, UUID groupIdUuid, Lock lock) {
+		boolean noOutput = true;
+		cancelScheduledFutureIfAny(correlationKey, groupIdUuid, true);
+		MessageGroup messageGroup = this.messageStore.getMessageGroup(correlationKey);
+		if (this.sequenceAware) {
+			messageGroup = new SequenceAwareMessageGroup(messageGroup);
+		}
+
+		if (!messageGroup.isComplete() && messageGroup.canAdd(message)) {
+			MessageGroup messageGroupToLog = messageGroup;
+			this.logger.trace(() -> "Adding message to group [ " + messageGroupToLog + "]");
+			messageGroup = store(correlationKey, message);
+			messageGroup = setGroupConditionIfAny(message, messageGroup);
+			if (this.releaseStrategy.canRelease(messageGroup)) {
+				Collection<Message<?>> completedMessages = null;
+				try {
+					noOutput = false;
+					completedMessages = completeGroup(message, correlationKey, messageGroup, lock);
+				}
+				finally {
+					afterRelease(messageGroup, completedMessages);
+				}
+				if (!isExpireGroupsUponCompletion() && this.minimumTimeoutForEmptyGroups > 0) {
+					removeEmptyGroupAfterTimeout(groupIdUuid, this.minimumTimeoutForEmptyGroups);
+				}
+			}
+			else {
+				scheduleGroupToForceComplete(messageGroup);
+			}
+		}
+		else {
+			noOutput = false;
+			discardMessage(message, lock);
+		}
+		return noOutput;
+	}
+
+	private void handleMessageWithAgent(Message<?> message) {
 		String invocationId = UUID.randomUUID().toString();
 		CorrelatingAgentPortGrpc.CorrelatingAgentPortBlockingStub agent = obtainCorrelatingAgent();
 		CorrelatingDependencyGateway dependencyGateway = this.correlatingDependencyGateway;
-		if (dependencyGateway != null) {
-			dependencyGateway.register(invocationId, message);
-		}
+		Assert.state(dependencyGateway != null, "The correlating dependency gateway is not initialized");
 		try {
-			MessageEnvelope envelope = CorrelatingMessageMapper.toEnvelope(message, this.payloadCodec);
+			dependencyGateway.register(invocationId, message);
+			HandleMessageRequest.Builder request = HandleMessageRequest.newBuilder().setInvocationId(invocationId);
+			CorrelatingAgentProjectionAdapter projectionAdapter = this.correlatingAgentProjectionAdapter;
+			if (projectionAdapter != null) {
+				AgentMessageProjection projection = projectionAdapter.project(message);
+				if (projection != null) {
+					validateProjection(projection);
+					request.setProjection(projection);
+				}
+			}
 			HandleMessageResponse response = agent
 					.withDeadlineAfter(this.correlatingAgentDeadline.toNanos(), TimeUnit.NANOSECONDS)
-					.handleMessage(HandleMessageRequest.newBuilder()
-							.setInvocationId(invocationId)
-							.setMessage(envelope)
-							.build());
+					.handleMessage(request.build());
 			Assert.state(response.getOutcome() != DecisionOutcome.DECISION_OUTCOME_UNSPECIFIED
 					&& response.getOutcome() != DecisionOutcome.STALE,
 					() -> "Correlating agent returned an invalid outcome: " + response.getOutcome());
@@ -734,10 +815,15 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 			throw new MessageHandlingException(message, "Correlating agent invocation failed in [" + this + ']', ex);
 		}
 		finally {
-			if (dependencyGateway != null) {
-				dependencyGateway.unregister(invocationId);
-			}
+			dependencyGateway.unregister(invocationId);
 		}
+	}
+
+	private void validateProjection(AgentMessageProjection projection) {
+		Assert.hasText(projection.getType(), "A correlating agent projection must declare a type");
+		Assert.hasText(projection.getContentType(), "A correlating agent projection must declare a content type");
+		Assert.isTrue(projection.getSchemaVersion() > 0,
+				"A correlating agent projection must declare a positive schema version");
 	}
 
 	private CorrelatingAgentPortGrpc.CorrelatingAgentPortBlockingStub obtainCorrelatingAgent() {
@@ -748,6 +834,16 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 		}
 		Assert.state(agent != null, "The correlating agent could not be initialized");
 		return agent;
+	}
+
+	private static UUID groupIdFor(Object correlationKey) {
+		try {
+			return UUIDConverter.getUUID(correlationKey);
+		}
+		catch (@SuppressWarnings("unused") IllegalArgumentException ex) {
+			String representation = correlationKey.getClass().getName() + ':' + correlationKey.hashCode();
+			return UUID.nameUUIDFromBytes(representation.getBytes(StandardCharsets.UTF_8));
+		}
 	}
 
 	private void cancelScheduledFutureIfAny(Object correlationKey, UUID groupIdUuid, boolean mayInterruptIfRunning) {
@@ -839,7 +935,7 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 								}, startTime.toInstant());
 
 				this.logger.debug(() -> "Schedule MessageGroup [ " + messageGroup + "] to 'forceComplete'.");
-				this.expireGroupScheduledFutures.put(UUIDConverter.getUUID(groupId), scheduledFuture);
+				this.expireGroupScheduledFutures.put(groupIdFor(groupId), scheduledFuture);
 			}
 			else {
 				this.forceReleaseProcessor.processMessageGroup(messageGroup);
@@ -857,6 +953,13 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 		if (messageGroup.getTimestamp() == timestamp && messageGroup.getLastModified() == lastModified) {
 			this.forceReleaseProcessor.processMessageGroup(messageGroup);
 		}
+	}
+
+	private void discardMessage(Message<?> message, Lock lock) {
+		if (this.releaseLockBeforeSend) {
+			lock.unlock();
+		}
+		discardMessage(message);
 	}
 
 	private void discardMessage(Message<?> message) {
@@ -884,21 +987,95 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 		afterRelease(group, completedMessages);
 	}
 
-	protected void forceComplete(MessageGroup group) {
+	protected void forceComplete(MessageGroup group) { // NOSONAR Complexity
+		if (this.correlatingAgentEnabled) {
+			forceCompleteWithAgent(group);
+			return;
+		}
+
+		Object correlationKey = group.getGroupId();
+		UUID groupId = groupIdFor(correlationKey);
+		Lock lock = this.lockRegistry.obtain(groupId.toString());
+		boolean removeGroup = true;
+		boolean noOutput = true;
+		try {
+			lock.lockInterruptibly();
+			try {
+				cancelScheduledFutureIfAny(correlationKey, groupId, false);
+				MessageGroup groupNow = group;
+				if (!group.isComplete()) {
+					groupNow = this.messageStore.getMessageGroup(correlationKey);
+				}
+				long lastModifiedNow = groupNow.getLastModified();
+				int groupSize = groupNow.size();
+				if ((!groupNow.isComplete() || groupSize == 0)
+						&& group.getLastModified() == lastModifiedNow
+						&& group.getTimestamp() == groupNow.getTimestamp()) {
+
+					if (groupSize > 0) {
+						noOutput = false;
+						if (this.releaseStrategy.canRelease(groupNow)) {
+							completeGroup(correlationKey, groupNow, lock);
+						}
+						else {
+							expireGroup(correlationKey, groupNow, lock);
+						}
+						if (!this.expireGroupsUponTimeout) {
+							afterRelease(groupNow, groupNow.getMessages(), true);
+							removeGroup = false;
+						}
+					}
+					else {
+						removeGroup = lastModifiedNow
+								<= (System.currentTimeMillis() - this.minimumTimeoutForEmptyGroups);
+						if (removeGroup) {
+							this.logger.debug(() -> "Removing empty group: " + correlationKey);
+						}
+					}
+				}
+				else {
+					removeGroup = false;
+					this.logger.debug(() -> "Group expiry candidate (" + correlationKey
+							+ ") has changed - it may be reconsidered for a future expiration");
+				}
+			}
+			catch (MessageDeliveryException ex) {
+				removeGroup = false;
+				this.logger.debug(() -> "Group expiry candidate (" + correlationKey
+						+ ") has been affected by MessageDeliveryException - "
+						+ "it may be reconsidered for a future expiration one more time");
+				throw ex;
+			}
+			finally {
+				try {
+					if (removeGroup) {
+						remove(group);
+					}
+				}
+				finally {
+					if (noOutput || !this.releaseLockBeforeSend) {
+						lock.unlock();
+					}
+				}
+			}
+		}
+		catch (@SuppressWarnings("unused") InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			this.logger.debug("Thread was interrupted while trying to obtain lock");
+		}
+	}
+
+	private void forceCompleteWithAgent(MessageGroup group) {
 		String invocationId = UUID.randomUUID().toString();
 		CorrelatingAgentPortGrpc.CorrelatingAgentPortBlockingStub agent = obtainCorrelatingAgent();
 		CorrelatingDependencyGateway dependencyGateway = this.correlatingDependencyGateway;
-		if (dependencyGateway != null) {
-			dependencyGateway.register(invocationId, group);
-		}
+		Assert.state(dependencyGateway != null, "The correlating dependency gateway is not initialized");
 		try {
+			dependencyGateway.register(invocationId, group);
 			ForceCompleteResponse response = agent
 					.withDeadlineAfter(this.correlatingAgentDeadline.toNanos(), TimeUnit.NANOSECONDS)
 					.forceComplete(ForceCompleteRequest.newBuilder()
 							.setInvocationId(invocationId)
-							.setGroupId(this.payloadCodec.encode(group.getGroupId()))
-							.setCandidateTimestamp(group.getTimestamp())
-							.setCandidateLastModified(group.getLastModified())
 							.build());
 			Assert.state(response.getOutcome() != DecisionOutcome.DECISION_OUTCOME_UNSPECIFIED
 					&& response.getOutcome() != DecisionOutcome.STALE,
@@ -917,10 +1094,21 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 			throw new IllegalStateException("Correlating agent force-complete invocation failed in [" + this + ']', ex);
 		}
 		finally {
-			if (dependencyGateway != null) {
-				dependencyGateway.unregister(invocationId);
+			dependencyGateway.unregister(invocationId);
+		}
+	}
+
+	private MessageGroup setGroupConditionIfAny(Message<?> message, MessageGroup messageGroup) {
+		MessageGroup messageGroupToUse = messageGroup;
+		if (this.groupConditionSupplier != null) {
+			String condition = this.groupConditionSupplier.apply(message, messageGroupToUse.getCondition());
+			this.messageStore.setGroupCondition(messageGroupToUse.getGroupId(), condition);
+			messageGroupToUse = this.messageStore.getMessageGroup(messageGroupToUse.getGroupId());
+			if (this.sequenceAware) {
+				messageGroupToUse = new SequenceAwareMessageGroup(messageGroupToUse);
 			}
 		}
+		return messageGroupToUse;
 	}
 
 	protected void remove(MessageGroup group) {
@@ -1130,26 +1318,26 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 	private final class CorrelatingDependencyGateway
 			extends CorrelatingDependencyPortGrpc.CorrelatingDependencyPortImplBase {
 
-		private final Map<String, Message<?>> localMessages = new ConcurrentHashMap<>();
-
 		private final Map<String, MessageAssessment> assessments = new ConcurrentHashMap<>();
 
 		private final Map<String, OperationContext> operations = new ConcurrentHashMap<>();
 
+		private final Map<String, ForceOperationContext> forceOperations = new ConcurrentHashMap<>();
+
 		private final Map<String, MessageGroup> forceGroups = new ConcurrentHashMap<>();
 
 		void register(String invocationId, Message<?> message) {
-			this.localMessages.put(invocationId, message);
+			this.operations.put(invocationId, new OperationContext(message, resolveCorrelationKey(message)));
 		}
 
 		void register(String invocationId, MessageGroup group) {
-			this.forceGroups.put(invocationId, group);
+			this.forceOperations.put(invocationId, new ForceOperationContext(group, group.getGroupId()));
 		}
 
 		void unregister(String invocationId) {
-			this.localMessages.remove(invocationId);
 			this.assessments.remove(invocationId);
 			this.operations.remove(invocationId);
+			this.forceOperations.remove(invocationId);
 			this.forceGroups.remove(invocationId);
 		}
 
@@ -1158,7 +1346,7 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 				StreamObserver<MessageAssessment> responseObserver) {
 
 			try {
-				OperationContext operation = obtainOperation(request.getInvocationId(), request.getMessage());
+				OperationContext operation = obtainOperation(request.getInvocationId());
 				Message<?> message = operation.message();
 				Object correlationKey = operation.correlationKey();
 				Lock lock = obtainGroupLock(correlationKey);
@@ -1216,10 +1404,10 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 			try {
 				MessageAssessment assessment = this.assessments.get(request.getInvocationId());
 				validateMessageDecision(request.getDecision(), assessment);
-				OperationContext operation = obtainOperation(request.getInvocationId(), request.getMessage());
+				OperationContext operation = obtainOperation(request.getInvocationId());
 				Message<?> message = operation.message();
 				Object correlationKey = operation.correlationKey();
-				UUID groupId = UUIDConverter.getUUID(correlationKey);
+				UUID groupId = groupIdFor(correlationKey);
 				lock = AbstractCorrelatingMessageHandler.this.lockRegistry.obtain(groupId.toString());
 				lock.lockInterruptibly();
 				lockHeld = true;
@@ -1239,7 +1427,7 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 						lock.unlock();
 						lockHeld = false;
 					}
-					discardMessage(this.localMessages.getOrDefault(request.getInvocationId(), message));
+					discardMessage(message);
 					respond(responseObserver, DecisionOutcome.DISCARDED, currentVersion, "Message discarded");
 					return;
 				}
@@ -1308,18 +1496,20 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 				StreamObserver<ForceCompleteAssessment> responseObserver) {
 
 			try {
-				Object correlationKey = decodeGroupId(request.getGroupId());
+				ForceOperationContext operation = obtainForceOperation(request.getInvocationId());
+				MessageGroup candidate = operation.candidate();
+				Object correlationKey = operation.correlationKey();
 				Lock lock = obtainGroupLock(correlationKey);
 				lock.lockInterruptibly();
 				try {
-					MessageGroup group = this.forceGroups.get(request.getInvocationId());
-					if (group == null || !group.isComplete()) {
+					MessageGroup group = candidate;
+					if (!candidate.isComplete()) {
 						group = AbstractCorrelatingMessageHandler.this.messageStore.getMessageGroup(correlationKey);
 					}
 					this.forceGroups.put(request.getInvocationId(), group);
 					int size = group.size();
-					boolean unchanged = request.getCandidateTimestamp() == group.getTimestamp()
-							&& request.getCandidateLastModified() == group.getLastModified();
+					boolean unchanged = candidate.getTimestamp() == group.getTimestamp()
+							&& candidate.getLastModified() == group.getLastModified();
 					boolean eligible = unchanged && (!group.isComplete() || size == 0);
 					if (eligible && size == 0) {
 						eligible = group.getLastModified()
@@ -1360,14 +1550,17 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 			boolean removeGroup = false;
 			MessageGroup group = null;
 			try {
-				Object correlationKey = decodeGroupId(request.getGroupId());
-				UUID groupId = UUIDConverter.getUUID(correlationKey);
+				ForceOperationContext operation = obtainForceOperation(request.getInvocationId());
+				Object correlationKey = operation.correlationKey();
+				UUID groupId = groupIdFor(correlationKey);
 				lock = AbstractCorrelatingMessageHandler.this.lockRegistry.obtain(groupId.toString());
 				lock.lockInterruptibly();
 				lockHeld = true;
 				group = this.forceGroups.get(request.getInvocationId());
 				if (group == null) {
-					group = AbstractCorrelatingMessageHandler.this.messageStore.getMessageGroup(correlationKey);
+					group = operation.candidate().isComplete()
+							? operation.candidate()
+							: AbstractCorrelatingMessageHandler.this.messageStore.getMessageGroup(correlationKey);
 				}
 				long currentVersion = groupVersion(group);
 				if (currentVersion != request.getExpectedVersion()) {
@@ -1436,31 +1629,16 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 			}
 		}
 
-		private Message<?> decodeMessage(String invocationId, MessageEnvelope envelope) {
-			Message<?> localMessage = this.localMessages.get(invocationId);
-			Map<String, Object> localHeaders = localMessage != null
-					? new HashMap<>(localMessage.getHeaders())
-					: Collections.emptyMap();
-			return CorrelatingMessageMapper.fromEnvelope(envelope,
-					AbstractCorrelatingMessageHandler.this.payloadCodec,
-					AbstractCorrelatingMessageHandler.this.deserializationFilter, localHeaders);
-		}
-
-		private OperationContext obtainOperation(String invocationId, MessageEnvelope envelope) {
+		private OperationContext obtainOperation(String invocationId) {
 			OperationContext operation = this.operations.get(invocationId);
-			if (operation == null) {
-				Message<?> message = decodeMessage(invocationId, envelope);
-				operation = new OperationContext(message, resolveCorrelationKey(message));
-				this.operations.put(invocationId, operation);
-			}
+			Assert.state(operation != null, () -> "No message operation exists for invocation " + invocationId);
 			return operation;
 		}
 
-		private Object decodeGroupId(org.springframework.integration.aggregator.agent.grpc.SerializedObject groupId) {
-			Object result = AbstractCorrelatingMessageHandler.this.payloadCodec.decode(groupId,
-					AbstractCorrelatingMessageHandler.this.deserializationFilter);
-			Assert.state(result != null, "Correlating group id cannot be null");
-			return result;
+		private ForceOperationContext obtainForceOperation(String invocationId) {
+			ForceOperationContext operation = this.forceOperations.get(invocationId);
+			Assert.state(operation != null, () -> "No force-complete operation exists for invocation " + invocationId);
+			return operation;
 		}
 
 		private Object resolveCorrelationKey(Message<?> message) {
@@ -1473,7 +1651,7 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 
 		private Lock obtainGroupLock(Object correlationKey) {
 			return AbstractCorrelatingMessageHandler.this.lockRegistry
-					.obtain(UUIDConverter.getUUID(correlationKey).toString());
+					.obtain(groupIdFor(correlationKey).toString());
 		}
 
 		private ConditionAssessment assessCondition(Message<?> message, MessageGroup group, boolean messagePresent) {
@@ -1565,6 +1743,9 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 	}
 
 	private record OperationContext(Message<?> message, Object correlationKey) {
+	}
+
+	private record ForceOperationContext(MessageGroup candidate, Object correlationKey) {
 	}
 
 	protected static class SequenceAwareMessageGroup extends SimpleMessageGroup {

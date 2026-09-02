@@ -57,9 +57,9 @@
 				order="5"
 				expire-duration="10000"
 				expire-timeout="250"
+				correlating-agent="true"
 				correlating-agent-deadline="PT5S"
-				payload-codec="payloadCodec"
-				deserialization-filter="deserializationFilter">
+				correlating-agent-projection-adapter="projectionAdapter">
 		<expire-transactional/>
 	</aggregator>
 
@@ -72,11 +72,8 @@
 
 	<beans:bean id="store" class="org.springframework.integration.store.SimpleMessageStore"/>
 
-	<beans:bean id="payloadCodec"
-				class="org.springframework.integration.aggregator.agent.JavaSerializationCorrelatingPayloadCodec"/>
-
-	<beans:bean id="deserializationFilter"
-				class="org.springframework.integration.config.AggregatorParserTests$AllowAllFilter"/>
+	<beans:bean id="projectionAdapter"
+				class="org.springframework.integration.config.AggregatorParserTests$TestProjectionAdapter"/>
 
 	<channel id="aggregatorWithExpressionsInput"/>
 	<channel id="aggregatorWithExpressionsOutput"/>

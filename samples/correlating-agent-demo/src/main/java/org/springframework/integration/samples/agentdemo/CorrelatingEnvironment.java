@@ -23,12 +23,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import com.google.protobuf.ByteString;
 import io.grpc.BindableService;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 
 import org.springframework.integration.aggregator.AggregatingMessageHandler;
 import org.springframework.integration.aggregator.DefaultAggregatingMessageGroupProcessor;
+import org.springframework.integration.aggregator.agent.grpc.AgentMessageProjection;
 import org.springframework.integration.aggregator.agent.grpc.CorrelatingAgentPortGrpc;
 import org.springframework.integration.aggregator.agent.grpc.HealthRequest;
 import org.springframework.integration.channel.QueueChannel;
@@ -74,8 +76,17 @@ final class CorrelatingEnvironment implements AutoCloseable {
 		this.agentChannel = agentChannel;
 		this.agent = agentChannel != null ? CorrelatingAgentPortGrpc.newBlockingStub(agentChannel) : null;
 		this.handler.setDiscardChannel(this.discards);
+		this.handler.setCorrelatingAgentProjectionAdapter(message -> AgentMessageProjection.newBuilder()
+				.setType("demo-message")
+				.setContentType("text/plain")
+				.setSchemaVersion(1)
+				.setData(ByteString.copyFromUtf8(String.valueOf(message.getPayload())))
+				.build());
 		if (agentChannel != null) {
 			this.handler.setCorrelatingAgentChannel(agentChannel);
+		}
+		else {
+			this.handler.setCorrelatingAgentEnabled(true);
 		}
 	}
 

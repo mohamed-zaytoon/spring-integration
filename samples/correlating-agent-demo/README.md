@@ -2,6 +2,8 @@
 
 This isolated Spring Boot application exercises the correlating-agent implementation in the current Spring Integration checkout. It provides a local browser dashboard, an HTTP API, JSON run history, and an external topology that launches the handler and agent in separate JVMs connected through plaintext loopback gRPC.
 
+Correlating-agent processing is opt-in. The demo enables it explicitly for the in-process topology and implicitly by configuring an agent channel for the external topology. It also demonstrates an optional opaque `text/plain` projection; the handler retains and processes the original message locally, so payloads and correlation keys do not need to implement Java `Serializable`.
+
 The sample is a composite Gradle build. It substitutes `org.springframework.integration:spring-integration-core:7.2.0-SNAPSHOT` with `../../spring-integration-core`; it is not part of the framework publication, BOM, or distribution.
 
 ## Run the dashboard

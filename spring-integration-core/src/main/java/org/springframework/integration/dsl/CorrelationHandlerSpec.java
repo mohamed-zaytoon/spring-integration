@@ -16,7 +16,6 @@
 
 package org.springframework.integration.dsl;
 
-import java.io.ObjectInputFilter;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -32,7 +31,7 @@ import org.springframework.integration.aggregator.CorrelationStrategy;
 import org.springframework.integration.aggregator.ExpressionEvaluatingCorrelationStrategy;
 import org.springframework.integration.aggregator.ExpressionEvaluatingReleaseStrategy;
 import org.springframework.integration.aggregator.ReleaseStrategy;
-import org.springframework.integration.aggregator.agent.CorrelatingPayloadCodec;
+import org.springframework.integration.aggregator.agent.CorrelatingAgentProjectionAdapter;
 import org.springframework.integration.config.CorrelationStrategyFactoryBean;
 import org.springframework.integration.config.ReleaseStrategyFactoryBean;
 import org.springframework.integration.expression.FunctionExpression;
@@ -90,6 +89,16 @@ public abstract class CorrelationHandlerSpec<S extends CorrelationHandlerSpec<S,
 	}
 
 	/**
+	 * Enable the in-process correlating agent.
+	 * @return the handler spec
+	 * @since 7.2
+	 */
+	public S correlatingAgent() {
+		this.handler.setCorrelatingAgentEnabled(true);
+		return _this();
+	}
+
+	/**
 	 * Configure the deadline for correlating agent calls.
 	 * @param deadline the positive deadline
 	 * @return the handler spec
@@ -101,24 +110,13 @@ public abstract class CorrelationHandlerSpec<S extends CorrelationHandlerSpec<S,
 	}
 
 	/**
-	 * Configure the codec used for message payloads crossing the gRPC boundary.
-	 * @param payloadCodec the payload codec
+	 * Configure an adapter that creates optional, informational projections for the agent.
+	 * @param projectionAdapter the projection adapter
 	 * @return the handler spec
 	 * @since 7.2
 	 */
-	public S payloadCodec(CorrelatingPayloadCodec payloadCodec) {
-		this.handler.setPayloadCodec(payloadCodec);
-		return _this();
-	}
-
-	/**
-	 * Configure the filter applied to Java object deserialization.
-	 * @param deserializationFilter the object input filter
-	 * @return the handler spec
-	 * @since 7.2
-	 */
-	public S deserializationFilter(ObjectInputFilter deserializationFilter) {
-		this.handler.setDeserializationFilter(deserializationFilter);
+	public S correlatingAgentProjectionAdapter(CorrelatingAgentProjectionAdapter projectionAdapter) {
+		this.handler.setCorrelatingAgentProjectionAdapter(projectionAdapter);
 		return _this();
 	}
 
