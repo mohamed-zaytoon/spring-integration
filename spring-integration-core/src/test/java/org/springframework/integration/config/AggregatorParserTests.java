@@ -16,7 +16,6 @@
 
 package org.springframework.integration.config;
 
-import java.io.ObjectInputFilter;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -41,6 +40,8 @@ import org.springframework.integration.aggregator.MethodInvokingMessageGroupProc
 import org.springframework.integration.aggregator.MethodInvokingReleaseStrategy;
 import org.springframework.integration.aggregator.ReleaseStrategy;
 import org.springframework.integration.aggregator.SimpleMessageGroupProcessor;
+import org.springframework.integration.aggregator.agent.CorrelatingAgentProjectionAdapter;
+import org.springframework.integration.aggregator.agent.grpc.AgentMessageProjection;
 import org.springframework.integration.channel.QueueChannel;
 import org.springframework.integration.endpoint.EventDrivenConsumer;
 import org.springframework.integration.handler.support.MessagingMethodInvokerHelper;
@@ -204,10 +205,9 @@ public class AggregatorParserTests {
 				.isEqualTo(Duration.ofSeconds(10));
 		assertThat(TestUtils.<Duration>getPropertyValue(consumer, "correlatingAgentDeadline"))
 				.isEqualTo(Duration.ofSeconds(5));
-		assertThat(TestUtils.<Object>getPropertyValue(consumer, "payloadCodec"))
-				.isSameAs(this.context.getBean("payloadCodec"));
-		assertThat(TestUtils.<Object>getPropertyValue(consumer, "deserializationFilter"))
-				.isSameAs(this.context.getBean("deserializationFilter"));
+		assertThat(TestUtils.<Boolean>getPropertyValue(consumer, "correlatingAgentEnabled")).isTrue();
+		assertThat(TestUtils.<Object>getPropertyValue(consumer, "correlatingAgentProjectionAdapter"))
+				.isSameAs(this.context.getBean("projectionAdapter"));
 	}
 
 	@Test
@@ -354,11 +354,11 @@ public class AggregatorParserTests {
 
 	}
 
-	public static class AllowAllFilter implements ObjectInputFilter {
+	public static class TestProjectionAdapter implements CorrelatingAgentProjectionAdapter {
 
 		@Override
-		public Status checkInput(FilterInfo filterInfo) {
-			return Status.ALLOWED;
+		public AgentMessageProjection project(Message<?> message) {
+			return null;
 		}
 
 	}

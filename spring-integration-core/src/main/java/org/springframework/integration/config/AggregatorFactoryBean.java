@@ -16,7 +16,6 @@
 
 package org.springframework.integration.config;
 
-import java.io.ObjectInputFilter;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -37,7 +36,7 @@ import org.springframework.integration.aggregator.DelegatingMessageGroupProcesso
 import org.springframework.integration.aggregator.MessageGroupProcessor;
 import org.springframework.integration.aggregator.MethodInvokingMessageGroupProcessor;
 import org.springframework.integration.aggregator.ReleaseStrategy;
-import org.springframework.integration.aggregator.agent.CorrelatingPayloadCodec;
+import org.springframework.integration.aggregator.agent.CorrelatingAgentProjectionAdapter;
 import org.springframework.integration.store.MessageGroup;
 import org.springframework.integration.store.MessageGroupStore;
 import org.springframework.integration.support.locks.LockRegistry;
@@ -113,9 +112,9 @@ public class AggregatorFactoryBean extends AbstractSimpleMessageHandlerFactoryBe
 
 	private @Nullable Duration correlatingAgentDeadline;
 
-	private @Nullable CorrelatingPayloadCodec payloadCodec;
+	private @Nullable Boolean correlatingAgentEnabled;
 
-	private @Nullable ObjectInputFilter deserializationFilter;
+	private @Nullable CorrelatingAgentProjectionAdapter correlatingAgentProjectionAdapter;
 
 	public void setProcessorBean(Object processorBean) {
 		this.processorBean = processorBean;
@@ -218,12 +217,14 @@ public class AggregatorFactoryBean extends AbstractSimpleMessageHandlerFactoryBe
 		this.correlatingAgentDeadline = correlatingAgentDeadline;
 	}
 
-	public void setPayloadCodec(CorrelatingPayloadCodec payloadCodec) {
-		this.payloadCodec = payloadCodec;
+	public void setCorrelatingAgentEnabled(Boolean correlatingAgentEnabled) {
+		this.correlatingAgentEnabled = correlatingAgentEnabled;
 	}
 
-	public void setDeserializationFilter(ObjectInputFilter deserializationFilter) {
-		this.deserializationFilter = deserializationFilter;
+	public void setCorrelatingAgentProjectionAdapter(
+			CorrelatingAgentProjectionAdapter correlatingAgentProjectionAdapter) {
+
+		this.correlatingAgentProjectionAdapter = correlatingAgentProjectionAdapter;
 	}
 
 	/**
@@ -264,10 +265,11 @@ public class AggregatorFactoryBean extends AbstractSimpleMessageHandlerFactoryBe
 
 		JavaUtils.INSTANCE
 				.acceptIfNotNull(this.expireGroupsUponCompletion, aggregator::setExpireGroupsUponCompletion)
+				.acceptIfNotNull(this.correlatingAgentEnabled, aggregator::setCorrelatingAgentEnabled)
 				.acceptIfNotNull(this.correlatingAgentChannel, aggregator::setCorrelatingAgentChannel)
 				.acceptIfNotNull(this.correlatingAgentDeadline, aggregator::setCorrelatingAgentDeadline)
-				.acceptIfNotNull(this.payloadCodec, aggregator::setPayloadCodec)
-				.acceptIfNotNull(this.deserializationFilter, aggregator::setDeserializationFilter)
+				.acceptIfNotNull(this.correlatingAgentProjectionAdapter,
+						aggregator::setCorrelatingAgentProjectionAdapter)
 				.acceptIfNotNull(this.sendTimeout, aggregator::setSendTimeout)
 				.acceptIfNotNull(this.outputChannelName, aggregator::setOutputChannelName)
 				.acceptIfNotNull(this.lockRegistry, (Consumer<LockRegistry<?>>) aggregator::setLockRegistry)

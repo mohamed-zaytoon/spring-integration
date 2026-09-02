@@ -64,12 +64,17 @@ class ExternalCorrelatingAgentChannelTests {
 
 		try {
 			QueueChannel replies = new QueueChannel();
-			handler.handleMessage(message("one", 1, replies));
-			handler.handleMessage(message("two", 2, replies));
+			Object correlationKey = new Object();
+			NonSerializablePayload one = new NonSerializablePayload("one");
+			NonSerializablePayload two = new NonSerializablePayload("two");
+			handler.handleMessage(message(one, correlationKey, 1, replies));
+			handler.handleMessage(message(two, correlationKey, 2, replies));
 
 			Message<?> result = replies.receive(0);
 			assertThat(result).isNotNull();
-			assertThat(result.getPayload()).isEqualTo(List.of("one", "two"));
+			assertThat(result.getPayload()).isEqualTo(List.of(one, two));
+			assertThat(((List<?>) result.getPayload()).get(0)).isSameAs(one);
+			assertThat(((List<?>) result.getPayload()).get(1)).isSameAs(two);
 		}
 		finally {
 			handler.destroy();
@@ -80,13 +85,18 @@ class ExternalCorrelatingAgentChannelTests {
 		}
 	}
 
-	private static Message<String> message(String payload, int sequenceNumber, QueueChannel replyChannel) {
+	private static Message<NonSerializablePayload> message(NonSerializablePayload payload, Object correlationKey,
+			int sequenceNumber, QueueChannel replyChannel) {
+
 		return MessageBuilder.withPayload(payload)
-				.setCorrelationId("external-agent")
+				.setCorrelationId(correlationKey)
 				.setSequenceNumber(sequenceNumber)
 				.setSequenceSize(2)
 				.setReplyChannel(replyChannel)
 				.build();
+	}
+
+	private record NonSerializablePayload(String value) {
 	}
 
 }

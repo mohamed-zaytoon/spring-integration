@@ -240,6 +240,7 @@ public final class CorrelatingAgentDemo {
 
 		Scenario() {
 			this.handler.setDiscardChannel(this.discards);
+			this.handler.setCorrelatingAgentEnabled(true);
 		}
 
 		Scenario(Channel agentChannel) {

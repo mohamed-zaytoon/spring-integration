@@ -71,6 +71,8 @@ public abstract class AbstractCorrelatingMessageHandlerParser extends AbstractCo
 
 	private static final String CORRELATING_AGENT_CHANNEL = "correlating-agent-channel";
 
+	private static final String CORRELATING_AGENT = "correlating-agent";
+
 	private static final String CORRELATING_AGENT_DEADLINE = "correlating-agent-deadline";
 
 	protected void doParse(BeanDefinitionBuilder builder, Element element, @Nullable BeanMetadataElement processor,
@@ -114,9 +116,11 @@ public abstract class AbstractCorrelatingMessageHandlerParser extends AbstractCo
 				"expireDurationMillis");
 
 		IntegrationNamespaceUtils.setReferenceIfAttributeDefined(builder, element, "group-condition-supplier");
+		IntegrationNamespaceUtils.setValueIfAttributeDefined(builder, element, CORRELATING_AGENT,
+				"correlatingAgentEnabled");
 		IntegrationNamespaceUtils.setReferenceIfAttributeDefined(builder, element, CORRELATING_AGENT_CHANNEL);
-		IntegrationNamespaceUtils.setReferenceIfAttributeDefined(builder, element, "payload-codec");
-		IntegrationNamespaceUtils.setReferenceIfAttributeDefined(builder, element, "deserialization-filter");
+		IntegrationNamespaceUtils.setReferenceIfAttributeDefined(builder, element,
+				"correlating-agent-projection-adapter");
 		String agentDeadline = element.getAttribute(CORRELATING_AGENT_DEADLINE);
 		if (StringUtils.hasText(agentDeadline)) {
 			builder.addPropertyValue("correlatingAgentDeadline", Duration.parse(agentDeadline));

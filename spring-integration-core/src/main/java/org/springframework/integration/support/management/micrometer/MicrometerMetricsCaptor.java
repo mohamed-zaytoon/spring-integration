@@ -84,7 +84,7 @@ public class MicrometerMetricsCaptor implements MetricsCaptor {
 	}
 
 	@Override
-	public GaugeBuilder gaugeBuilder(String name, Object obj, ToDoubleFunction<Object> f) {
+	public GaugeBuilder gaugeBuilder(String name, @Nullable Object obj, ToDoubleFunction<Object> f) {
 		return new MicroGaugeBuilder(getMeterRegistry(), name, obj, f);
 	}
 
@@ -269,7 +269,9 @@ public class MicrometerMetricsCaptor implements MetricsCaptor {
 
 		private final Gauge.Builder<Object> builder;
 
-		protected MicroGaugeBuilder(MeterRegistry meterRegistry, String name, Object obj, ToDoubleFunction<Object> f) {
+		@SuppressWarnings("NullAway") // Preserve the nullable MetricsCaptor contract.
+		protected MicroGaugeBuilder(MeterRegistry meterRegistry, String name, @Nullable Object obj,
+				ToDoubleFunction<Object> f) {
 			this.meterRegistry = meterRegistry;
 			this.builder = Gauge.builder(name, obj, f);
 		}
